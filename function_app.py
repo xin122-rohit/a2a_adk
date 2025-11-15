@@ -1,6 +1,7 @@
 # --------------------------------------------------------------
 #  function_app.py  (Azure Functions v2 – single file)
 # --------------------------------------------------------------
+import uuid
 import azure.functions as func
 import json
 import time
@@ -121,7 +122,7 @@ async def chat(req: func.HttpRequest) -> func.HttpResponse:
         return _jsonrpc_error(-32600, "Invalid JSON-RPC version")
     if "method" not in payload or "id" not in payload:
         return _jsonrpc_error(-32600, "Missing method or id")
-
+   
     method = payload["method"]
     request_id = payload["id"]
     params = payload.get("params", {})
@@ -136,9 +137,12 @@ async def chat(req: func.HttpRequest) -> func.HttpResponse:
     user_text = ""
 
     for part in parts:
-        if isinstance(part, dict) and part.get("type") == "text" and "text" in part:
+        if isinstance(part, dict) and part.get("kind") == "text" and "text" in part:
             user_text = part["text"]
             break
+
+    # === RETURN USING kind ===
+   
 
     if not user_text:
         print(f"DEBUG: Received payload: {json.dumps(payload, indent=2)}")
@@ -173,11 +177,58 @@ async def chat(req: func.HttpRequest) -> func.HttpResponse:
         return _jsonrpc_error(-32000, str(e), request_id)
 
     # === Return Success ===
-    a2a_result = {
-        "result": {
-            "role": "assistant",
-            "parts": [{"type": "text", "text": reply_text}]
-        }
-    }
+    # === RETURN ADK NATIVE FORMAT (MATCH LOCAL AGENT) ===
+    task_id = str(uuid.uuid4())  # Generate task ID
 
+    a2a_result = {
+        "kind": "task",
+        "id": task_id,  # REQUIRED BY ADK
+        "status": {"state": "completed"},
+        "artifacts": [
+            {
+                "artifactId": str(uuid.uuid4()),
+                "parts": [
+                    {"kind": "text", "text": reply_text}
+                ]
+            }
+        ],
+        "contextId": message.get("contextId", "unknown"),
+        "history": [
+            {
+                "kind": "message",
+                "messageId": message.get("messageId", "unknown"),
+                "role": "agent",  # "assistant" → "agent" (ADK SPEC)
+                "parts": [{"kind": "text", "text": reply_text}],
+                "contextId": message.get("contextId", "unknown")
+            }
+        ]
+    }
     return _jsonrpc_success(a2a_result, request_id)
+    # task_id = str(uuid.uuid4())
+    # message_id = str(uuid.uuid4())
+    # context_id = message.get("contextId") or str(uuid.uuid4())
+
+    # task = {
+    #     "kind": "task",
+    #     "id": task_id,
+    #     "contextId": context_id,
+    #     "status": "completed",
+    #     "messages": [
+    #         {
+    #             "role": "assistant",
+    #             "parts": [{"kind": "text", "text": reply_text}],
+    #             "messageId": message_id
+    #         }
+    #     ]
+    # }
+
+    # response = {
+    #     "jsonrpc": "2.0",
+    #     "result": task,
+    #     "id": request_id
+    # }
+
+    # return _jsonrpc_success(
+    #     content=response,
+    #     headers={"Access-Control-Allow-Origin": "*"}
+    # )
